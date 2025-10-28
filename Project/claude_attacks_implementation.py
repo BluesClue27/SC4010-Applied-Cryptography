@@ -8,9 +8,11 @@ Purpose: Prove insecurity of improper RSA parameter choices
 
 import math
 import time
-from fractions import Fraction
-from typing import Tuple, Optional, List
 import random
+import io
+from dataclasses import dataclass, field
+from contextlib import nullcontext, redirect_stdout
+from typing import Tuple, Optional, List
 
 
 # ============================================================================
@@ -448,6 +450,154 @@ def boneh_durfee_theory():
 
 
 # ============================================================================
+# SUPPORTING DATA STRUCTURES & HELPERS
+# ============================================================================
+
+@dataclass
+class RSAParameters:
+    """Container for vulnerable RSA parameters."""
+    N: int
+    e: int
+    d: int
+    p: int
+    q: int
+    phi_n: int
+    bits: int
+
+    @property
+    def modulus_bits(self) -> int:
+        return self.N.bit_length()
+
+    @property
+    def d_bits(self) -> int:
+        return self.d.bit_length()
+
+    @property
+    def e_bits(self) -> int:
+        return self.e.bit_length()
+
+    @property
+    def gap(self) -> int:
+        return abs(self.p - self.q)
+
+    @property
+    def gap_bits(self) -> int:
+        gap_value = self.gap
+        return gap_value.bit_length() if gap_value else 0
+
+
+@dataclass
+class AttackSuiteResult:
+    """Structured record of attack outcomes."""
+    rsa: RSAParameters
+    fermat_factors: Optional[Tuple[int, int]]
+    quadratic_factors: Optional[Tuple[int, int]]
+    wiener_d: Optional[int]
+    wiener_threshold: int
+    notes: List[str] = field(default_factory=list)
+
+    @property
+    def fermat_success(self) -> bool:
+        return self.fermat_factors is not None and all(self.fermat_factors)
+
+    @property
+    def quadratic_success(self) -> bool:
+        return self.quadratic_factors is not None and all(self.quadratic_factors)
+
+    @property
+    def wiener_success(self) -> bool:
+        return self.wiener_d is not None
+
+    @property
+    def wiener_threshold_bits(self) -> int:
+        return self.wiener_threshold.bit_length() if self.wiener_threshold else 0
+
+    def summary_lines(self) -> List[str]:
+        """Return human-readable summary lines for reporting."""
+        lines = [
+            f"Modulus bits: {self.rsa.modulus_bits}",
+            f"|p - q| = {self.rsa.gap} (bits: {self.rsa.gap_bits})",
+            f"Private exponent bits: {self.rsa.d_bits}",
+            f"Public exponent bits: {self.rsa.e_bits}",
+            f"Wiener threshold (n^(1/4)/3): {self.wiener_threshold} (bits: {self.wiener_threshold_bits})",
+            f"Fermat factorization success: {self.fermat_success}",
+            f"Wiener attack success: {self.wiener_success}",
+            f"Quadratic sieve success: {self.quadratic_success}",
+        ]
+        if self.wiener_success and self.wiener_d is not None:
+            lines.append(f"Recovered d: {self.wiener_d}")
+        for note in self.notes:
+            lines.append(f"Note: {note}")
+        return lines
+
+
+def integer_fourth_root(n: int) -> int:
+    """Integer fourth root using Newton iteration (avoids float overflow)."""
+    if n == 0:
+        return 0
+    x = 1 << ((n.bit_length() + 3) // 4)
+    while True:
+        x_cubed = x ** 3
+        x_new = (3 * x + n // x_cubed) // 4
+        if x_new >= x:
+            return x
+        x = x_new
+
+
+def _stdout_context(verbose: bool):
+    """Utility context manager to silence prints when verbose is False."""
+    return nullcontext() if verbose else redirect_stdout(io.StringIO())
+
+
+def run_attack_suite(
+    bits: int = 512,
+    d_bits: int = 128,
+    run_quadratic_sieve: bool = False,
+    verbose: bool = True,
+) -> AttackSuiteResult:
+    """
+    Execute the full vulnerable RSA generation and attack sequence.
+
+    Args:
+        bits: Target modulus bit length for the vulnerable RSA instance.
+        d_bits: Bit length for the intentionally small private exponent.
+        run_quadratic_sieve: Whether to run the quadratic sieve demonstration.
+        verbose: If False, suppress console output from the underlying routines.
+
+    Returns:
+        AttackSuiteResult summarising recovered data and key metrics.
+    """
+    with _stdout_context(verbose):
+        rsa_dict = generate_vulnerable_rsa(bits=bits, d_bits=d_bits)
+        rsa = RSAParameters(**rsa_dict)
+
+        fermat_factors = fermat_factorization(rsa.N)
+        quadratic_factors = None
+        if run_quadratic_sieve:
+            quadratic_factors = quadratic_sieve_simple(rsa.N)
+        wiener_d = wiener_attack(rsa.e, rsa.N)
+
+    threshold = integer_fourth_root(rsa.N) // 3
+
+    notes: List[str] = []
+    if rsa.gap_bits < max(0, rsa.modulus_bits // 2 - 100):
+        notes.append("Gap between p and q violates recommended lower bound.")
+    if wiener_d is not None:
+        notes.append("Wiener attack successfully recovered the private exponent.")
+    if not run_quadratic_sieve:
+        notes.append("Quadratic sieve skipped (set run_quadratic_sieve=True to execute).")
+
+    return AttackSuiteResult(
+        rsa=rsa,
+        fermat_factors=fermat_factors,
+        quadratic_factors=quadratic_factors,
+        wiener_d=wiener_d,
+        wiener_threshold=threshold,
+        notes=notes,
+    )
+
+
+# ============================================================================
 # DEMONSTRATION & TESTING
 # ============================================================================
 
@@ -544,31 +694,7 @@ def main():
     print(" "*10 + "Exposing SecureEncrypCompany's Vulnerabilities")
     print("="*70)
     
-    # Generate vulnerable RSA parameters
-    rsa = generate_vulnerable_rsa(bits=512, d_bits=128)
-    
-    print(f"\n{'='*70}")
-    print("Generated RSA Parameters:")
-    print(f"{'='*70}")
-    print(f"N = {rsa['N']}")
-    print(f"e = {rsa['e']}")
-    print(f"d = {rsa['d']} (SECRET - but we'll recover it!)")
-    print(f"\nActual factors (for verification):")
-    print(f"p = {rsa['p']}")
-    print(f"q = {rsa['q']}")
-    
-    # ATTACK 1: Fermat Factorization
-    p_fermat, q_fermat = fermat_factorization(rsa['N'])
-    
-    # ATTACK 2: Quadratic Sieve (optional, may not always succeed)
-    print("\n" + "="*70)
-    print("NOTE: Quadratic Sieve is computationally intensive.")
-    print("Skipping full QS demonstration for time. Use for larger N.")
-    print("="*70)
-    # Uncomment to run: p_qs, q_qs = quadratic_sieve_simple(rsa['N'])
-    
-    # ATTACK 3: Wiener's Attack
-    d_recovered = wiener_attack(rsa['e'], rsa['N'])
+    result = run_attack_suite(bits=512, d_bits=128, run_quadratic_sieve=False, verbose=True)
     
     # ATTACK 4: Boneh-Durfee (theoretical)
     boneh_durfee_theory()
@@ -578,11 +704,12 @@ def main():
     print("SECURITY AUDIT SUMMARY")
     print(f"{'='*70}")
     print("\n✗ CRITICAL VULNERABILITIES FOUND:")
-    print(f"  1. Close Primes: |p-q| = {abs(rsa['p'] - rsa['q']):,} bits")
-    print(f"     → Broken by Fermat in {fermat_factorization.__doc__}")
-    print(f"  2. Small d: {rsa['d'].bit_length()} bits (should be ~{rsa['bits']} bits)")
-    print(f"     → Broken by Wiener attack")
-    print(f"  3. Non-standard e: {rsa['e'].bit_length()} bits (should be 17 bits, e=65537)")
+    print(f"  1. Close primes: |p - q| = {result.rsa.gap:,} (bits: {result.rsa.gap_bits})")
+    print(f"     → Fermat factorization success: {result.fermat_success}")
+    print(f"  2. Small private exponent: {result.rsa.d_bits} bits")
+    print(f"     → Wiener threshold bits: {result.wiener_threshold_bits}")
+    print(f"     → Wiener attack recovered d: {result.wiener_success}")
+    print(f"  3. Non-standard public exponent: {result.rsa.e_bits} bits (expected 17 bits for e=65537)")
     
     print("\n✓ BOB'S RECOMMENDATIONS:")
     print("  1. Use cryptographically secure random primes")
@@ -590,6 +717,11 @@ def main():
     print("  3. Use standard e = 65537")
     print("  4. Ensure d ≈ φ(N) in size")
     print("  5. Never prioritize 'speed' over security!")
+
+    if result.notes:
+        print("\nNotes:")
+        for note in result.notes:
+            print(f"  • {note}")
     
     print("\n" + "="*70)
     print("Bob's conclusion: REJECT SecureEncrypCompany's implementation!")
