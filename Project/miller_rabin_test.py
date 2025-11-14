@@ -48,7 +48,7 @@ def miller_rabin_test(n, rounds = 40):
         # We are looking for x^2 = 1 (mod n) with x != -1
         for j in range(r-1):
             x = pow(x,2,n)
-            # if x = -1 (mod n), means this witness passed, does not prove n is composite
+            # if x = -1 (mod n), means this witness passed
             if x == n-1:
                 break
         else:
