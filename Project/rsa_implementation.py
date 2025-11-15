@@ -26,20 +26,20 @@ def generate_prime_factors(factor_bits=1024, min_factor_delta_bits=256):
         if abs(p - q).bit_length() >= min_factor_delta_bits:
             return p, q
         
-# generate a random public exponent e for RSA
-# instead of using common value 65537
-def generate_public_exponent_e(phi_n,attempts=10000):
+# # generate a random public exponent e for RSA
+# # instead of using common value 65537
+# def generate_public_exponent_e(phi_n,attempts=10000):
 
-    for _ in range(attempts):
-        e = generate_random_number(phi_n.bit_length())
+#     for _ in range(attempts):
+#         e = generate_random_number(phi_n.bit_length())
 
-        # recompute public exponent e until 1 < e < phi_n
-        if e <=1 or e >= phi_n:
-            continue
+#         # recompute public exponent e until 1 < e < phi_n
+#         if e <=1 or e >= phi_n:
+#             continue
 
-        # check gcd(e,phi_n) == 1 to ensure inverse exists
-        if gcd(e, phi_n) == 1:
-            return e
+#         # check gcd(e,phi_n) == 1 to ensure inverse exists
+#         if gcd(e, phi_n) == 1:
+#             return e
 
 # compute private exponent d for RSA
 # have to implement check for d < (1/3) * N^(1/4) to avoid small d attacks
@@ -73,8 +73,8 @@ def decrypt_message(c, d, n):
 p, q = generate_prime_factors(factor_bits=1024, min_factor_delta_bits=256)
 n = p * q
 phi_n = (p - 1) * (q - 1)
-e = generate_public_exponent_e(phi_n)
-# e = 65537  # alternatively, use common public exponent
+# e = generate_public_exponent_e(phi_n)
+e = 65537  # alternatively, use common public exponent
 # can implement check for small d attacks here as well
 d = compute_private_exponent_d(e, phi_n)
 
