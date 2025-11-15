@@ -55,25 +55,76 @@ Bob implements a comprehensive attack suite to demonstrate these vulnerabilities
 
 ## Running the Code
 
-### Main Attack Demonstration
+### **Main Attack Suite** (`claude_attacks_implementation.py`)
+
+The main attack file **automatically detects and uses saved parameters** from `values.py` if available.
+
+#### **Option 1: Use Saved Parameters** (Recommended - Consistent Results)
+
 ```bash
-python Project/claude_attacks_implementation.py
+# Step 1: Generate weak RSA parameters (creates values.py)
+cd Project
+python rsa_weak_implementation.py
+# Enter any text when prompted (e.g., "test")
+
+# Step 2: Run attacks (automatically uses values.py)
+python claude_attacks_implementation.py
 ```
 
-This runs the complete attack suite with detailed output:
-- Generates vulnerable RSA parameters (close primes, small d)
-- Executes Fermat factorization (recovers p, q in milliseconds)
-- Runs Wiener attack (recovers d via continued fractions)
-- Displays Boneh-Durfee theoretical analysis
-- Provides comprehensive security audit summary
+**What happens:**
+1. ✅ `rsa_weak_implementation.py` generates weak p, q, N, d and saves to `values.py`
+2. ✅ `claude_attacks_implementation.py` detects `values.py` and loads parameters
+3. ✅ Runs all attacks on the saved parameters
+4. ✅ Same results every time (reproducible)
 
-**Expected Output**:
-- Key generation metrics (bit lengths, prime gaps, etc.)
-- Attack progress with step-by-step explanations
-- Success confirmations with recovered values
-- Vulnerability analysis and recommendations
+**Why use this?**
+- 🔁 Consistent parameters across multiple runs
+- 📤 Share `values.py` with team via GitHub
+- 📊 Perfect for documentation and presentations
+- 🎯 Realistic: "Bob receives vendor's parameters"
 
-### Verification Tests
+---
+
+#### **Option 2: Generate Fresh Parameters** (Quick Testing)
+
+```bash
+# Just run the attack suite directly
+cd Project
+python claude_attacks_implementation.py
+```
+
+**What happens:**
+1. ✅ No `values.py` detected
+2. ✅ Generates fresh weak RSA parameters automatically
+3. ✅ Runs all attacks immediately
+4. ✅ Different parameters each run
+
+**Why use this?**
+- ⚡ Quick one-command demo
+- 🎲 See attack work on different weak instances
+- 🚀 Fastest way to test
+
+---
+
+### **How It Works**
+
+The `claude_attacks_implementation.py` is **smart**:
+
+```python
+# Pseudocode inside main()
+if values.py exists:
+    print("📂 Loading saved parameters from values.py")
+    load parameters from values.py
+    run attacks
+else:
+    print("💡 Generating fresh weak parameters")
+    generate new weak RSA
+    run attacks
+```
+
+---
+
+### **Verification Tests** (Optional)
 ```bash
 python Project/test_verification.py
 ```
@@ -83,6 +134,33 @@ Shows quantitative proof of vulnerabilities:
 - Calculates Wiener threshold `(1/3)·N^(1/4)`
 - Verifies `d < threshold` (confirms vulnerability)
 - Validates `e·d ≡ 1 (mod φ(N))`
+
+---
+
+### **What Gets Saved in `values.py`**
+
+When you run `rsa_weak_implementation.py`, it creates:
+
+```python
+# values.py
+p = [large prime 1]
+q = [large prime 2]
+N = p * q
+phi_n = (p-1) * (q-1)
+e = [public exponent]
+d = [small private exponent]
+
+# Bit lengths
+p_bits = 1023
+q_bits = 1023
+N_bits = 2046
+d_bits = 256
+e_bits = 2043
+
+# Vulnerability metrics
+prime_gap = abs(p - q)  # Shows how close p and q are
+prime_gap_bits = 12     # Usually should be > 512 bits!
+```
 
 ### Reference RSA Implementation
 ```bash
@@ -225,10 +303,18 @@ for iteration in range(max_iterations):
 
 **Purpose**: Educational demonstration of general-purpose factoring.
 
+**Default Behavior**: ⚠️ **SKIPPED by default** (see line 1264 in main())
+
 **Why It's Included**:
 - Shows understanding of broader factoring techniques
 - Not strictly necessary for this weak RSA (Fermat is sufficient)
 - Demonstrates the "baby version" of production factoring methods
+
+**Why It's Skipped**:
+- Computationally expensive for 2046-bit modulus
+- Fermat attack already succeeds instantly (p and q are too close)
+- Would slow down demonstration with no practical benefit
+- Included in code for Randy's contribution documentation
 
 **How It Works**:
 1. Build a factor base: small primes p where N is a quadratic residue mod p
@@ -251,6 +337,28 @@ Includes helper functions:
 - `_collect_relations()`: Finds smooth relations
 - `_gaussian_elimination_mod2()`: Solves linear system over GF(2)
 - `_square_from_relations()`: Combines relations to factor N
+
+**How to Enable Attack 2**:
+If you want to run the Quadratic Sieve (for completeness):
+```python
+# In main() function (line 1264), change:
+result = run_attack_suite(bits=512, d_bits=128, run_quadratic_sieve=False, verbose=True)
+# To:
+result = run_attack_suite(bits=512, d_bits=128, run_quadratic_sieve=True, verbose=True)
+```
+
+**Expected Output When Enabled**:
+```
+ATTACK 2: QUADRATIC SIEVE (Simplified)
+Target N = [large number]
+N bit-length: 2046 bits
+[!] Educational implementation with clear steps
+[!] Production QS still needs advanced sieving / linear algebra
+
+Factor base size: [number] (first primes: [2, 3, 5, ...])
+Collected [number] smooth relations
+✓ FACTORIZATION SUCCESSFUL! (or timeout/failure for large N)
+```
 
 ---
 
@@ -836,12 +944,18 @@ SecureEncrypCompany had: ✅ + ❌ = ❌ (Overall failure)
 
 ## Attack Summary Table
 
-| Attack | Target Flaw | Complexity | Threshold | Randy/Ke Yuan |
-|--------|-------------|------------|-----------|---------------|
-| Fermat Factorization | Close primes | O(\|p-q\|) | |p-q| small | Randy |
-| Quadratic Sieve | General factoring | Sub-exponential | N/A (educational) | Randy |
-| Wiener Attack | Small d | O(log N) | d < N^0.25 | Ke Yuan |
-| Boneh-Durfee | Small d (improved) | O(m^6 log²N) | d < N^0.292 | Ke Yuan |
+| Attack | Target Flaw | Complexity | Threshold | Randy/Ke Yuan | Status in Output |
+|--------|-------------|------------|-----------|---------------|------------------|
+| Attack 1: Fermat Factorization | Close primes | O(\|p-q\|) | \|p-q\| small | Randy | ✅ **Runs** |
+| Attack 2: Quadratic Sieve | General factoring | Sub-exponential | N/A (educational) | Randy | ⏭️ **Skipped** |
+| Attack 3: Wiener Attack | Small d | O(log N) | d < N^0.25 | Ke Yuan | ✅ **Runs** |
+| Attack 4: Boneh-Durfee | Small d (improved) | O(m^6 log²N) | d < N^0.292 | Ke Yuan | ✅ **Runs** (Theory)
+
+**What You'll See in Terminal Output**:
+1. ✅ **Attack 1**: Fermat factorization recovers p, q in ~1 iteration
+2. ⏭️ **Attack 2**: Note in summary says "Quadratic sieve skipped"
+3. ✅ **Attack 3**: Wiener attack recovers d with full mathematical breakdown
+4. ✅ **Attack 4**: Boneh-Durfee theoretical analysis with comparative tables
 
 ---
 
@@ -923,7 +1037,16 @@ SecureEncrypCompany had: ✅ + ❌ = ❌ (Overall failure)
 
 **When asked about running attacks**:
 ```bash
-python Project/claude_attacks_implementation.py  # Full attack suite
-python Project/test_verification.py              # Verification metrics
-python OnlineSrcCode/rsa.py                      # Reference implementation
+# Option 1: With saved parameters (reproducible)
+python Project/rsa_weak_implementation.py        # Generate & save to values.py
+python Project/claude_attacks_implementation.py  # Automatically uses values.py
+
+# Option 2: Quick demo (fresh parameters)
+python Project/claude_attacks_implementation.py  # Auto-generates if no values.py
+
+# Verification only
+python Project/test_verification.py              # Metrics only
+
+# Reference implementation
+python OnlineSrcCode/rsa.py                      # Clean RSA demo
 ```
