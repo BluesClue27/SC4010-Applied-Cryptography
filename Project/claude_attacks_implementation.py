@@ -97,140 +97,224 @@ def fermat_factorization(N: int, max_iterations: int = 10**7) -> Optional[Tuple[
 # ATTACK 2: QUADRATIC SIEVE (general purpose factoring)
 # ============================================================================
 
-def quadratic_sieve_simple(N: int, factor_base_size: int = 100) -> Optional[Tuple[int, int]]:
+@dataclass
+class Relation:
+    """Book-keeping for a single smooth value x² − N."""
+    x: int
+    value: int
+    factors: List[Tuple[int, int]]
+    parity: List[int]
+
+
+def _sieve_primes(limit: int) -> List[int]:
+    """Return all primes ≤ limit (simple Eratosthenes)."""
+    sieve = [True] * (limit + 1)
+    sieve[0] = sieve[1] = False
+    for i in range(2, int(limit ** 0.5) + 1):
+        if sieve[i]:
+            step = i
+            start = i * i
+            sieve[start:limit + 1:step] = [False] * ((limit - start) // step + 1)
+    return [i for i, is_prime in enumerate(sieve) if is_prime]
+
+
+def _build_factor_base(N: int, base_size: int, prime_bound: int) -> List[int]:
     """
-    Simplified Quadratic Sieve - general purpose factoring
-    
-    Theory: Find integers x such that x² ≡ y² (mod N), then gcd(x-y, N) may factor N
-    
-    This is a SIMPLIFIED educational version. Production QS is much more complex.
-    
-    Algorithm:
-    1. Choose factor base of small primes
-    2. Find smooth numbers (factor over base) near √N
-    3. Use linear algebra to find subset whose product is a square
-    4. Compute gcd to extract factors
-    
-    Complexity: O(exp(√(ln N ln ln N))) - sub-exponential
-    Note: For large N (>100 digits), use optimized implementations
+    Build a factor base: primes p such that (N | p) = 1 (quadratic residue).
+    We over-sieve up to prime_bound and keep the first base_size hits.
+    """
+    factor_base: List[int] = []
+    for p in _sieve_primes(prime_bound):
+        if pow(N, (p - 1) // 2, p) == 1:
+            factor_base.append(p)
+            if len(factor_base) == base_size:
+                break
+    return factor_base
+
+
+def _trial_division(value: int, factor_base: List[int]) -> Optional[List[Tuple[int, int]]]:
+    """Factor |value| over the factor base; return exponents or None."""
+    remaining = abs(value)
+    factors: List[Tuple[int, int]] = []
+    for p in factor_base:
+        if p * p > remaining:
+            break
+        exp = 0
+        while remaining % p == 0:
+            remaining //= p
+            exp += 1
+        if exp:
+            factors.append((p, exp))
+    # If remainder > 1 it must itself be in the base (since base not complete)
+    if remaining != 1:
+        if remaining in factor_base:
+            factors.append((remaining, 1))
+            remaining = 1
+        else:
+            return None
+    return factors if remaining == 1 else None
+
+
+def _parity_vector(factors: List[Tuple[int, int]], factor_base: List[int]) -> List[int]:
+    """Parity (mod 2) of exponents aligned with factor_base order."""
+    parity = [0] * len(factor_base)
+    index = {p: idx for idx, p in enumerate(factor_base)}
+    for prime, exp in factors:
+        parity[index[prime]] ^= exp & 1
+    return parity
+
+
+def _collect_relations(
+    N: int,
+    factor_base: List[int],
+    sieve_span: int,
+    relation_target: int,
+) -> List[Relation]:
+    """
+    Gather smooth values x² − N for x in [⌈√N⌉, ⌈√N⌉ + sieve_span).
+    This uses straightforward trial division for clarity.
+    """
+    relations: List[Relation] = []
+    start_x = math.isqrt(N)
+    if start_x * start_x < N:
+        start_x += 1
+
+    for x in range(start_x, start_x + sieve_span):
+        value = x * x - N
+        if value <= 0:
+            continue
+        factors = _trial_division(value, factor_base)
+        if factors is None:
+            continue
+        parity = _parity_vector(factors, factor_base)
+        relations.append(Relation(x=x, value=value, factors=factors, parity=parity))
+        if len(relations) >= relation_target:
+            break
+    return relations
+
+
+def _gaussian_elimination_mod2(relations: List[Relation]) -> List[List[int]]:
+    """
+    Perform Gaussian elimination over GF(2) to find a dependency.
+    We augment the matrix with an identity matrix to keep track of the
+    combination of original rows that produces the zero vector.
+    """
+    if not relations:
+        return []
+
+    m = len(relations[0].parity)
+    n = len(relations)
+
+    # Build augmented matrix [parity | identity]
+    matrix = [
+        relations[i].parity[:] + [1 if i == j else 0 for j in range(n)]
+        for i in range(n)
+    ]
+
+    row = 0
+    for col in range(m):
+        pivot = None
+        for r in range(row, n):
+            if matrix[r][col]:
+                pivot = r
+                break
+        if pivot is None:
+            continue
+        matrix[row], matrix[pivot] = matrix[pivot], matrix[row]
+        for r in range(n):
+            if r != row and matrix[r][col]:
+                matrix[r] = [
+                    (matrix[r][c] ^ matrix[row][c]) for c in range(m + n)
+                ]
+        row += 1
+
+    dependencies: List[List[int]] = []
+    for r in range(n):
+        if all(v == 0 for v in matrix[r][:m]):
+            combo = matrix[r][m:]
+            indices = [idx for idx, bit in enumerate(combo) if bit]
+            if indices:
+                dependencies.append(indices)
+    return dependencies
+
+
+def _square_from_relations(N: int, relations: List[Relation], indices: List[int]) -> Tuple[int, int]:
+    """Combine chosen relations into X² ≡ Y² (mod N)."""
+    exponent_totals = {}
+    X = 1
+    for idx in indices:
+        relation = relations[idx]
+        X = (X * relation.x) % N
+        for prime, exp in relation.factors:
+            exponent_totals[prime] = exponent_totals.get(prime, 0) + exp
+
+    Y = 1
+    for prime, exp in exponent_totals.items():
+        Y = (Y * pow(prime, exp // 2, N)) % N
+    return X, Y
+
+
+def quadratic_sieve_simple(
+    N: int,
+    factor_base_size: int = 100,
+    sieve_span: int = 20000,
+    prime_bound: int = 200000,
+) -> Optional[Tuple[int, int]]:
+    """
+    Quadratic Sieve (structured teaching version)
+
+    This refactored variant mirrors the real QS flow while keeping the maths
+    gentle: we build a factor base, collect smooth relations, solve for a
+    linear dependency over GF(2), and combine the relations into an RSA break.
     """
     print(f"\n{'='*70}")
     print("ATTACK 2: QUADRATIC SIEVE (Simplified)")
     print(f"{'='*70}")
     print(f"Target N = {N}")
     print(f"N bit-length: {N.bit_length()} bits")
-    print("\n[!] This is an educational simplified implementation")
-    print("[!] For production use, consider YAFU, msieve, or CADO-NFS\n")
-    
+    print("\n[!] Educational implementation with clear steps")
+    print("[!] Production QS still needs advanced sieving / linear algebra\n")
+
     start_time = time.time()
-    
-    # Step 1: Generate factor base (small primes where N is a quadratic residue)
-    def sieve_primes(limit):
-        """Sieve of Eratosthenes"""
-        sieve = [True] * (limit + 1)
-        sieve[0] = sieve[1] = False
-        for i in range(2, int(limit**0.5) + 1):
-            if sieve[i]:
-                for j in range(i*i, limit + 1, i):
-                    sieve[j] = False
-        return [i for i in range(2, limit + 1) if sieve[i]]
-    
-    primes = sieve_primes(10000)
-    
-    # Choose primes where N is a quadratic residue (Legendre symbol = 1)
-    factor_base = []
-    for p in primes:
-        if pow(N, (p - 1) // 2, p) == 1:
-            factor_base.append(p)
-            if len(factor_base) >= factor_base_size:
-                break
-    
-    print(f"Factor base size: {len(factor_base)}")
-    print(f"Factor base: {factor_base[:20]}..." if len(factor_base) > 20 else f"Factor base: {factor_base}")
-    
-    # Step 2: Sieving - find smooth numbers
-    sqrt_n = math.isqrt(N)
-    sieve_range = 10000
-    smooth_numbers = []
-    
-    print(f"\nSieving for smooth numbers around √N...")
-    
-    for x in range(sqrt_n, sqrt_n + sieve_range):
-        q = x * x - N
-        if q <= 0:
-            continue
-        
-        # Try to factor q over factor base
-        temp_q = abs(q)
-        factors = []
-        
-        for p in factor_base:
-            exp = 0
-            while temp_q % p == 0:
-                temp_q //= p
-                exp += 1
-            if exp > 0:
-                factors.append((p, exp))
-        
-        # If fully factored (smooth), save it
-        if temp_q == 1:
-            smooth_numbers.append((x, q, factors))
-            if len(smooth_numbers) >= factor_base_size + 10:
-                break
-    
-    print(f"Found {len(smooth_numbers)} smooth numbers")
-    
-    if len(smooth_numbers) < factor_base_size:
-        print("\n✗ Insufficient smooth numbers found")
-        print("   Consider: larger sieve range or factor base")
+
+    factor_base = _build_factor_base(N, factor_base_size, prime_bound)
+    if len(factor_base) < factor_base_size:
+        print("✗ Could not assemble requested factor base size – enlarge prime_bound.")
         return None, None
-    
-    # Step 3: Linear algebra to find dependencies
-    # (Simplified: try random combinations)
-    print("\nSearching for linear dependencies...")
-    
-    for _ in range(1000):
-        # Randomly select subset
-        subset_size = random.randint(2, min(10, len(smooth_numbers)))
-        subset = random.sample(smooth_numbers, subset_size)
-        
-        # Compute product
-        x_prod = 1
-        for x, _, _ in subset:
-            x_prod = (x_prod * x) % N
-        
-        # Check if product of q values is a perfect square
-        exp_sums = {}
-        for _, q, factors in subset:
-            for p, exp in factors:
-                exp_sums[p] = exp_sums.get(p, 0) + exp
-        
-        # All exponents must be even for perfect square
-        if all(exp % 2 == 0 for exp in exp_sums.values()):
-            # Compute y = √(product of q values) mod N
-            y_squared = 1
-            for p, exp in exp_sums.items():
-                y_squared = (y_squared * pow(p, exp // 2, N)) % N
-            
-            # Try gcd
-            factor = math.gcd(x_prod - y_squared, N)
-            
-            if 1 < factor < N:
-                p = factor
-                q = N // factor
-                elapsed = time.time() - start_time
-                
-                print(f"\n✓ FACTORIZATION SUCCESSFUL!")
-                print(f"  Time: {elapsed:.6f} seconds")
-                print(f"\n  p = {p}")
-                print(f"  q = {q}")
-                print(f"  Verify: p × q = N? {p * q == N}")
-                
-                return min(p, q), max(p, q)
-    
-    elapsed = time.time() - start_time
-    print(f"\n✗ No factors found (time: {elapsed:.6f}s)")
-    print("   Note: This simplified version may not always succeed")
+
+    print(f"Factor base size: {len(factor_base)} (first primes: {factor_base[:10]})")
+
+    # Need slightly more relations than base size for a kernel vector
+    relation_target = factor_base_size + 15
+    relations = _collect_relations(N, factor_base, sieve_span, relation_target)
+    print(f"Collected {len(relations)} smooth relations")
+
+    if len(relations) <= factor_base_size:
+        print("\n✗ Insufficient smooth relations – raise sieve_span or base size.")
+        return None, None
+
+    dependencies = _gaussian_elimination_mod2(relations)
+    if not dependencies:
+        print("\n✗ Failed to find a linear dependency – collect more relations.")
+        return None, None
+
+    for dependency in dependencies:
+        X, Y = _square_from_relations(N, relations, dependency)
+        factor = math.gcd(X - Y, N)
+        if factor in (1, N):
+            factor = math.gcd(X + Y, N)
+
+        if 1 < factor < N:
+            other = N // factor
+            elapsed = time.time() - start_time
+            print(f"\n✓ FACTORIZATION SUCCESSFUL!")
+            print(f"  Time: {elapsed:.6f} seconds")
+            print(f"\n  p = {min(factor, other)}")
+            print(f"  q = {max(factor, other)}")
+            print(f"  Verify: p × q = N? {factor * other == N}")
+            return min(factor, other), max(factor, other)
+
+    print("\n✗ Dependencies led to trivial factors – collect more relations and retry.")
     return None, None
 
 
