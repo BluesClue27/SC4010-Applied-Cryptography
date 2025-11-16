@@ -40,8 +40,7 @@ def generate_prime_factors_down(value):
         if is_probably_prime(q):
             return q
         
-# generate a random public exponent e for RSA
-# instead of using common value 65537
+# generate a random private exponent d for RSA
 def generate_private_exponent_d(phi_n,attempts=10000):
 
     for _ in range(attempts):
@@ -57,8 +56,8 @@ def generate_private_exponent_d(phi_n,attempts=10000):
         if gcd(d, phi_n) == 1:
             return d
 
-# compute private exponent d for RSA
-# have to implement check for d < (1/3) * N^(1/4) to avoid small d attacks
+# compute public exponent e for RSA
+# instead of using common value 65537
 def compute_public_exponent_e(d, phi_n):
     e = pow(d, -1, phi_n)
 
