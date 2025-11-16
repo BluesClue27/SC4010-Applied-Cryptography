@@ -35,17 +35,27 @@ def miller_rabin_test(n, rounds = 40):
         d //= 2
 
     for i in range(rounds):
+        # Miller Rabin witness generation
         a = secrets.randbelow(n-3) + 2
         x = pow(a,d,n)
 
+        # the first iteration of x0 must be +-1 to be sure
+        # its NOT a composite number
+        # so we can continue to test the witness
         if x == 1 or x == n - 1:
             continue
 
+        # We are looking for x^2 = 1 (mod n) with x != -1
         for j in range(r-1):
             x = pow(x,2,n)
+            # if x = -1 (mod n), means this witness passed
             if x == n-1:
                 break
         else:
-            return False 
+            # if we completed all r-1 rounds without finding x = -1 (mod n)
+            # n is composite
+            return False
+    # the number n passed all 40 rounds of testing
+    # it is probably prime  
     return True
         
