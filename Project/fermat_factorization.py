@@ -1,16 +1,6 @@
 import math
 
 def fermat_factorization(n, max_iterations=10**7):
-    """
-    Classic Fermat factorization for odd composites where p ≈ q.
-
-    Args:
-        n: Composite integer to factor. Must be odd and non-square.
-        max_iterations: Safety bound to prevent infinite loops.
-
-    Returns:
-        Tuple (p, q) if a factor pair is found, otherwise (None, None).
-    """
     if n % 2 == 0:
         return (2, n // 2) if n > 2 else (None, None)
 
@@ -26,3 +16,5 @@ def fermat_factorization(n, max_iterations=10**7):
         a += 1
 
     return None, None
+
+
